@@ -61,4 +61,9 @@ export async function createMcpServer(
   }
 
   return server;
+<<<<<<< HEAD
 }
+=======
+}
+
+>>>>>>> 44e2d8b7a (refactor(@angular/cli): split MCP server into multiple files.)
