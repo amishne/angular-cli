@@ -67,7 +67,6 @@ const TRANSFORMATIONS = [
 ] as const;
 
 const ALL_TRANSFORMATIONS = TRANSFORMATIONS.map((t) => t.name);
-
 export function registerModernizeTool(server: McpServer): void {
   server.registerTool(
     'modernize',
@@ -106,6 +105,7 @@ export function registerModernizeTool(server: McpServer): void {
           }),
         ),
       },
+
     },
     async (input) => {
       try {
