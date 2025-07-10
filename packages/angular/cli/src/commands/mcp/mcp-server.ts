@@ -15,6 +15,7 @@ import { registerBestPracticesTool } from './tools/best-practices';
 import { registerDocSearchTool } from './tools/doc-search';
 import { registerFindExampleTool } from './tools/examples';
 import { registerListProjectsTool } from './tools/projects';
+import { registerInstructionsResource } from './resources/instructions';
 
 export async function createMcpServer(
   context: {
@@ -34,28 +35,7 @@ export async function createMcpServer(
       'When writing or modifying Angular code, use the MCP server and its tools instead of direct shell commands where possible.',
   });
 
-  server.registerResource(
-    'instructions',
-    'instructions://best-practices',
-    {
-      title: 'Angular Best Practices and Code Generation Guide',
-      description:
-        "A comprehensive guide detailing Angular's best practices for code generation and development." +
-        ' This guide should be used as a reference by an LLM to ensure any generated code' +
-        ' adheres to modern Angular standards, including the use of standalone components,' +
-        ' typed forms, modern control flow syntax, and other current conventions.',
-      mimeType: 'text/markdown',
-    },
-    async () => {
-      const text = await readFile(
-        path.join(__dirname, 'instructions', 'best-practices.md'),
-        'utf-8',
-      );
-
-      return { contents: [{ uri: 'instructions://best-practices', text }] };
-    },
-  );
-
+  registerInstructionsResource(server);
   registerBestPracticesTool(server);
 
   // If run outside an Angular workspace (e.g., globally) skip the workspace specific tools.
