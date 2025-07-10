@@ -119,7 +119,7 @@ export function registerModernizeTool(server: McpServer): void {
         TRANSFORMATIONS.filter((t) => !t.includedByDefault)
           .map((t) => `* ${t.name}: ${t.description}`)
           .join('\n') +
-        '/<On-Request Transformations>\n' +
+        '/\n<On-Request Transformations>\n' +
         '\n</Transformations>\n',
       inputSchema: {
         files: z.array(
