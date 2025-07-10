@@ -16,6 +16,7 @@ import { registerDocSearchTool } from './tools/doc-search';
 import { registerFindExampleTool } from './tools/examples';
 import { registerListProjectsTool } from './tools/projects';
 import { registerInstructionsResource } from './resources/instructions';
+import { registerModernizeTool } from './tools/modernize';
 
 export async function createMcpServer(
   context: {
@@ -37,6 +38,7 @@ export async function createMcpServer(
 
   registerInstructionsResource(server);
   registerBestPracticesTool(server);
+  registerModernizeTool(server);
 
   // If run outside an Angular workspace (e.g., globally) skip the workspace specific tools.
   if (context.workspace) {
