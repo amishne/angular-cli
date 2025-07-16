@@ -95,6 +95,8 @@ const TRANSFORMATIONS = [
   },
 ] as const;
 
+const ALL_TRANSFORMATIONS = TRANSFORMATIONS.map((t) => t.name);
+
 export function registerModernizeTool(server: McpServer): void {
   server.registerTool(
     'modernize',
@@ -132,7 +134,7 @@ export function registerModernizeTool(server: McpServer): void {
         // infers `ALL_TRANSFORMATIONS` as `string[]`. The `as` cast is a
         // workaround to satisfy Zod's type checker.
         transformations: z
-          .array(z.enum(TRANSFORMATIONS.map((t) => t.name) as [string, ...string[]]))
+          .array(z.enum(ALL_TRANSFORMATIONS as [string, ...string[]]))
           .optional(),
         mode: z
           .enum(['convert-to-standalone', 'prune-ng-modules', 'standalone-bootstrap'])
