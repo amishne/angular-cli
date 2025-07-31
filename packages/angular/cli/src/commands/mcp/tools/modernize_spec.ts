@@ -146,4 +146,53 @@ describe('Modernize Tool', () => {
       expect(fileResult?.content).toBe('<app-foo />');
     });
   });
+
+  describe('Integration Tests', () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(tmpdir(), 'modernize-spec-integration-'));
+      fs.mkdirSync(path.join(tempDir, 'node_modules'));
+      fs.symlinkSync(
+        path.resolve('node_modules/@angular-devkit'),
+        path.join(tempDir, 'node_modules/@angular-devkit'),
+        'dir',
+      );
+      fs.symlinkSync(
+        path.resolve('node_modules/typescript'),
+        path.join(tempDir, 'node_modules/typescript'),
+        'dir',
+      );
+    });
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('should run the self-closing-tags migration', async () => {
+      const runfilesRoot = path.join(__dirname, '../../../../../../../../');
+      const outputFile = path.join(runfilesRoot, 'runfiles.log');
+      console.log('Output file:', outputFile);
+      fs.writeFileSync(outputFile, '');
+      fs.readdirSync(runfilesRoot, { recursive: true }).forEach((file) => {
+        fs.appendFileSync(outputFile, file + '\n');
+      });
+
+      const input: ModernizeInput = {
+        files: [{ name: 'test.ng.html', content: '<app-foo></app-foo>' }],
+        transformations: ['self-closing-tags-migration'],
+      };
+
+      const result = await runModernization(input, undefined, tempDir);
+
+      if (!('files' in result.structuredContent) || !result.structuredContent.files) {
+        fail('Expected files to be present in the result');
+        return;
+      }
+
+      const fileResult = result.structuredContent.files[0];
+      expect(fileResult?.changed).toBe(true);
+      expect(fileResult?.content).toBe('<app-foo />');
+    });
+  });
 });

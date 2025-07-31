@@ -7,8 +7,6 @@ import { NodeWorkflow } from '@angular-devkit/schematics/tools';
 import { NodeJsSyncHost } from '@angular-devkit/core/node';
 import { virtualFs } from '@angular-devkit/core';
 
-export const SCHEMATICS_ROOT = '../../../../../../@angular/core/schematics';
-
 enum SchematicTarget {
   Code,
   Template,
@@ -155,9 +153,10 @@ export async function runModernization(
       },
     );
 
+    const angularCorePath = path.dirname(require.resolve('@angular/core/package.json'));
     const collectionPaths = {
-      [SchematicRunner.Migration]: path.join(__dirname, SCHEMATICS_ROOT, 'migrations.json'),
-      [SchematicRunner.Collection]: path.join(__dirname, SCHEMATICS_ROOT, 'collection.json'),
+      [SchematicRunner.Migration]: path.join(angularCorePath, 'schematics/migrations.json'),
+      [SchematicRunner.Collection]: path.join(angularCorePath, 'schematics/collection.json'),
     };
 
     const transformationsToRun =
@@ -178,7 +177,7 @@ export async function runModernization(
         documentation.add(transformation.documentation);
       }
 
-      let options: { [key: string]: unknown } = { path: tempDir };
+      let options: { [key: string]: unknown } = { path: '/' };
       if (transformation.name === 'standalone') {
         const mode = input.mode ?? 'convert-to-standalone';
         options = { ...options, mode };

@@ -130,6 +130,7 @@ ts_project(
         "//:node_modules/@types/yargs",
         "//:node_modules/rxjs",
         "//:node_modules/semver",
+        "//:node_modules/typescript",
         "//packages/angular_devkit/schematics/testing",
     ],
 )
