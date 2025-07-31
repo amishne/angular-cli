@@ -13,6 +13,10 @@ packageExtensionsChecksum: d67b1f07b351844d00c57cbace376860
 importers:
 
   .:
+    dependencies:
+      rxjs:
+        specifier: 7.8.2
+        version: 7.8.2
     devDependencies:
       '@angular/animations':
         specifier: 20.2.0-next.3

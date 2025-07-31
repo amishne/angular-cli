@@ -1,10 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SchematicTestRunner, UnitTestTree } from '@angular-devkit/schematics/testing';
-import { Tree } from '@angular-devkit/schematics';
 import { z } from 'zod';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { NodeWorkflow } from '@angular-devkit/schematics/tools';
+import { NodeJsSyncHost } from '@angular-devkit/core/node';
+import { virtualFs } from '@angular-devkit/core';
 
-export const SCHEMATICS_ROOT = '../../../../../../node_modules/@angular/core/schematics';
+export const SCHEMATICS_ROOT = '../../../../../../@angular/core/schematics';
 
 enum SchematicTarget {
   Code,
@@ -96,6 +99,165 @@ const TRANSFORMATIONS = [
 ] as const;
 
 const ALL_TRANSFORMATIONS = TRANSFORMATIONS.map((t) => t.name);
+
+const modernizeInputSchema = z.object({
+  files: z.array(
+    z.object({
+      name: z.string().describe('The name of the file.'),
+      content: z.string().describe('The content of the file.'),
+    }),
+  ),
+  transformations: z.array(z.enum(ALL_TRANSFORMATIONS as [string, ...string[]])).optional(),
+  mode: z
+    .enum(['convert-to-standalone', 'prune-ng-modules', 'standalone-bootstrap'])
+    .optional()
+    .describe('The mode to use for the standalone transformation.'),
+});
+
+export type ModernizeInput = z.infer<typeof modernizeInputSchema>;
+
+// Extracted logic for testability
+export async function runModernization(
+  input: ModernizeInput,
+  workflow?: NodeWorkflow,
+  tempDir?: string,
+) {
+  const ownTempDir = !tempDir;
+  tempDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'angular-cli-modernize-'));
+  try {
+    const fileNames = input.files.map((f) => f.name);
+    const tsconfig = {
+      compilerOptions: {
+        target: 'es2022',
+        module: 'esnext',
+        lib: ['es2022', 'dom'],
+        skipLibCheck: true,
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true,
+        experimentalDecorators: true,
+        emitDecoratorMetadata: true,
+        useDefineForClassFields: false,
+      },
+      files: fileNames,
+    };
+    fs.writeFileSync(path.join(tempDir, 'tsconfig.json'), JSON.stringify(tsconfig, null, 2));
+    for (const file of input.files) {
+      const filePath = path.join(tempDir, file.name);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, file.content);
+    }
+
+    workflow ??= new NodeWorkflow(
+      new virtualFs.ScopedHost(new NodeJsSyncHost(), path.normalize(tempDir) as any),
+      {
+        packageManager: 'pnpm',
+        dryRun: false,
+      },
+    );
+
+    const collectionPaths = {
+      [SchematicRunner.Migration]: path.join(__dirname, SCHEMATICS_ROOT, 'migrations.json'),
+      [SchematicRunner.Collection]: path.join(__dirname, SCHEMATICS_ROOT, 'collection.json'),
+    };
+
+    const transformationsToRun =
+      input.transformations && input.transformations.length > 0
+        ? TRANSFORMATIONS.filter((t) => input.transformations!.includes(t.name))
+        : TRANSFORMATIONS.filter((t) => t.includedByDefault);
+
+    const hasCodeFiles = input.files.some((f) => f.name.endsWith('.ts'));
+    const hasTemplateFiles = input.files.some(
+      (f) => f.name.endsWith('.html') || f.name.endsWith('.ng.html'),
+    );
+
+    let instructions: string | undefined;
+    const documentation = new Set<string>();
+
+    for (const transformation of transformationsToRun) {
+      if (transformation.documentation) {
+        documentation.add(transformation.documentation);
+      }
+
+      let options: { [key: string]: unknown } = { path: tempDir };
+      if (transformation.name === 'standalone') {
+        const mode = input.mode ?? 'convert-to-standalone';
+        options = { ...options, mode };
+
+        if (mode === 'convert-to-standalone') {
+          instructions =
+            'The first step of the `standalone` migration has been performed. Please verify that your application builds and runs correctly. Then, run this tool again with `mode: "prune-ng-modules"` to continue.';
+        } else if (mode === 'prune-ng-modules') {
+          instructions =
+            'The second step of the `standalone` migration has been performed. Please verify that your application builds and runs correctly. Then, run this tool again with `mode: "standalone-bootstrap"` to complete the migration.';
+        } else {
+          instructions = 'The `standalone` migration has been completed.';
+        }
+      } else if (transformation.name === 'zoneless') {
+        instructions =
+          'The `zoneless` migration is a manual process. Please follow the instructions at https://angular.dev/guide/zoneless to complete the migration.';
+        continue; // Don't run a schematic for zoneless
+      }
+
+      if (
+        (transformation.target === SchematicTarget.Code && !hasCodeFiles) ||
+        (transformation.target === SchematicTarget.Template && !hasTemplateFiles)
+      ) {
+        continue;
+      }
+
+      await workflow
+        .execute({
+          collection: collectionPaths[transformation.runner],
+          schematic: transformation.name,
+          options,
+        })
+        .toPromise();
+    }
+
+    const updatedFiles = input.files.map((file) => {
+      const filePath = path.join(tempDir!, file.name);
+      if (!fs.existsSync(filePath)) {
+        return { name: file.name, content: undefined, changed: true };
+      }
+      const updatedContent = fs.readFileSync(filePath, 'utf8');
+      const changed = updatedContent !== file.content;
+
+      return {
+        name: file.name,
+        content: changed ? updatedContent : undefined,
+        changed,
+      };
+    });
+
+    const structuredContent = {
+      files: updatedFiles,
+      instructions,
+      documentation: documentation.size > 0 ? [...documentation].join('\n') : undefined,
+    };
+
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(structuredContent) }],
+      structuredContent,
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'An unknown error occurred.';
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Failed to run modernization migrations: ${message}`,
+        },
+      ],
+      structuredContent: {},
+      isError: true,
+    };
+  } finally {
+    if (ownTempDir && tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+}
+
 export function registerModernizeTool(server: McpServer): void {
   server.registerTool(
     'modernize',
@@ -122,134 +284,24 @@ export function registerModernizeTool(server: McpServer): void {
           .join('\n') +
         '/\n<On-Request Transformations>\n' +
         '\n</Transformations>\n',
-      inputSchema: {
-        files: z.array(
-          z.object({
-            name: z.string().describe('The name of the file.'),
-            content: z.string().describe('The content of the file.'),
-          }),
-        ),
-        // Zod's `enum` requires a non-empty array of string literals, but TypeScript
-        // infers `ALL_TRANSFORMATIONS` as `string[]`. The `as` cast is a
-        // workaround to satisfy Zod's type checker.
-        transformations: z
-          .array(z.enum(ALL_TRANSFORMATIONS as [string, ...string[]]))
-          .optional(),
-        mode: z
-          .enum(['convert-to-standalone', 'prune-ng-modules', 'standalone-bootstrap'])
-          .optional()
-          .describe('The mode to use for the standalone transformation.'),
+      annotations: {
+        readOnlyHint: true,
       },
+      inputSchema: modernizeInputSchema.shape,
       outputSchema: {
-        files: z.array(
-          z.object({
-            name: z.string().describe('The name of the file.'),
-            content: z.string().optional().describe('The updated content of the file.'),
-            changed: z.boolean().describe('Whether the file was changed.'),
-          }),
-        ),
+        files: z
+          .array(
+            z.object({
+              name: z.string().describe('The name of the file.'),
+              content: z.string().optional().describe('The updated content of the file.'),
+              changed: z.boolean().describe('Whether the file was changed.'),
+            }),
+          )
+          .optional(),
         instructions: z.string().optional().describe('Additional instructions.'),
         documentation: z.string().optional().describe('A link to relevant documentation.'),
       },
-
     },
-    async (input) => {
-      try {
-        // We don't have access to the file system to run schematics on it directly. Instead we
-        // use the test runner to create a virtual filesystem, populate it with the input files,
-        // and run the schematics on them.
-
-        const runners = {
-          [SchematicRunner.Migration]: new SchematicTestRunner(
-            '@angular/core',
-            path.join(__dirname, SCHEMATICS_ROOT, 'migrations.json'),
-          ),
-          [SchematicRunner.Collection]: new SchematicTestRunner(
-            '@angular/core',
-            path.join(__dirname, SCHEMATICS_ROOT, 'collection.json'),
-          ),
-        };
-
-        const transformationsToRun =
-          input.transformations && input.transformations.length > 0
-            ? TRANSFORMATIONS.filter((t) => input.transformations!.includes(t.name))
-            : TRANSFORMATIONS.filter((t) => t.includedByDefault);
-
-        const hasCodeFiles = input.files.some((f) => f.name.endsWith('.ts'));
-        const hasTemplateFiles = input.files.some(
-          (f) => f.name.endsWith('.html') || f.name.endsWith('.ng.html'),
-        );
-
-        let tree: Tree = new UnitTestTree(Tree.empty());
-        for (const file of input.files) {
-          tree.create(file.name, file.content);
-        }
-
-        let instructions: string | undefined;
-        const documentation = new Set<string>();
-
-        for (const transformation of transformationsToRun) {
-          if (transformation.documentation) {
-            documentation.add(transformation.documentation);
-          }
-          if (transformation.name === 'standalone') {
-            const mode = input.mode ?? 'convert-to-standalone';
-            tree = await runners[transformation.runner].runSchematic('standalone', { mode }, tree);
-
-            if (mode === 'convert-to-standalone') {
-              instructions =
-                'The first step of the `standalone` migration has been performed. Please verify that your application builds and runs correctly. Then, run this tool again with `mode: "prune-ng-modules"` to continue.';
-            } else if (mode === 'prune-ng-modules') {
-              instructions =
-                'The second step of the `standalone` migration has been performed. Please verify that your application builds and runs correctly. Then, run this tool again with `mode: "standalone-bootstrap"` to complete the migration.';
-            } else {
-              instructions = 'The `standalone` migration has been completed.';
-            }
-          } else if (transformation.name === 'zoneless') {
-            instructions =
-              'The `zoneless` migration is a manual process. Please follow the instructions at https://angular.dev/guide/zoneless to complete the migration.';
-          } else if (transformation.target === SchematicTarget.Code && hasCodeFiles) {
-            tree = await runners[transformation.runner].runSchematic(transformation.name, {}, tree);
-          } else if (transformation.target === SchematicTarget.Template && hasTemplateFiles) {
-            tree = await runners[transformation.runner].runSchematic(transformation.name, {}, tree);
-          }
-        }
-
-        const updatedFiles = input.files.map((file) => {
-          const updatedContent = tree.read(file.name)?.toString();
-          const changed = updatedContent !== undefined && updatedContent !== file.content;
-
-          return {
-            name: file.name,
-            content: changed ? updatedContent : undefined,
-            changed,
-          };
-        });
-
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: 'Modernization migrations applied successfully.',
-            },
-          ],
-          structuredContent: {
-            files: updatedFiles,
-            instructions,
-            documentation: documentation.size > 0 ? [...documentation].join('\n') : undefined,
-          },
-        };
-      } catch (e) {
-        const message = e instanceof Error ? e.message : 'An unknown error occurred.';
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Failed to run modernization migrations: ${message}`,
-            },
-          ],
-        };
-      }
-    },
+    (input) => runModernization(input as ModernizeInput),
   );
 }
