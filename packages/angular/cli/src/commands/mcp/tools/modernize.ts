@@ -1,237 +1,126 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
-import { NodeWorkflow } from '@angular-devkit/schematics/tools';
-import { NodeJsSyncHost } from '@angular-devkit/core/node';
-import { virtualFs } from '@angular-devkit/core';
 
-enum SchematicTarget {
-  Code,
-  Template,
+interface Transformation {
+  name: string;
+  description: string;
+  documentationUrl: string;
+  instructions?: string;
 }
 
-enum SchematicRunner {
-  Migration,
-  Collection,
-}
-
-const TRANSFORMATIONS = [
+const TRANSFORMATIONS: Array<Transformation> = [
   {
     name: 'control-flow-migration',
     description:
       'Migrates from `*ngIf`, `*ngFor`, and `*ngSwitch` to the new `@if`, `@for`, and `@switch` block syntax in templates.',
-    target: SchematicTarget.Template,
-    runner: SchematicRunner.Collection,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/reference/migrations/control-flow',
+    documentationUrl: 'https://angular.dev/reference/migrations/control-flow',
   },
   {
     name: 'self-closing-tags-migration',
     description:
       'Converts tags for elements with no content to be self-closing (e.g., `<app-foo></app-foo>` becomes `<app-foo />`).',
-    target: SchematicTarget.Template,
-    runner: SchematicRunner.Collection,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/reference/migrations/self-closing-tags',
+    documentationUrl: 'https://angular.dev/reference/migrations/self-closing-tags',
   },
   {
     name: 'test-bed-get',
     description:
       'Updates `TestBed.get` to the preferred and type-safe `TestBed.inject` in TypeScript test files.',
-    target: SchematicTarget.Code,
-    runner: SchematicRunner.Migration,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/guide/testing/dependency-injection',
+    documentationUrl: 'https://angular.dev/guide/testing/dependency-injection',
   },
   {
     name: 'inject-flags',
     description:
       'Updates `inject` calls from using the InjectFlags enum to a more modern and readable options object.',
-    target: SchematicTarget.Code,
-    runner: SchematicRunner.Migration,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/reference/migrations/inject-function',
+    documentationUrl: 'https://angular.dev/reference/migrations/inject-function',
   },
   {
     name: 'output-migration',
     description: 'Converts `@Output` declarations to the new functional `output()` syntax.',
-    target: SchematicTarget.Code,
-    runner: SchematicRunner.Collection,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/reference/migrations/outputs',
+    documentationUrl: 'https://angular.dev/reference/migrations/outputs',
   },
   {
     name: 'signal-input-migration',
     description: 'Migrates `@Input` declarations to the new signal-based `input()` syntax.',
-    target: SchematicTarget.Code,
-    runner: SchematicRunner.Collection,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/reference/migrations/signal-inputs',
+    documentationUrl: 'https://angular.dev/reference/migrations/signal-inputs',
   },
   {
     name: 'signal-queries-migration',
     description:
       'Migrates `@ViewChild` and `@ContentChild` queries to their signal-based `viewChild` and `contentChild` versions.',
-    target: SchematicTarget.Code,
-    runner: SchematicRunner.Collection,
-    includedByDefault: true,
-    documentation: 'https://angular.dev/reference/migrations/signal-queries',
+    documentationUrl: 'https://angular.dev/reference/migrations/signal-queries',
   },
   {
     name: 'standalone',
     description:
-      'Converts the application to use standalone components, directives, and pipes. This is a three-step process. After each step, you should verify that your application builds and runs correctly. Full instructions at https://angular.dev/reference/migrations/standalone',
-    target: SchematicTarget.Code,
-    runner: SchematicRunner.Collection,
-    includedByDefault: false,
-    documentation: 'https://angular.dev/reference/migrations/standalone',
+      'Converts the application to use standalone components, directives, and pipes. This is a three-step process. After each step, you should verify that your application builds and runs correctly.',
+    instructions: `This migration requires running a cli schematic multiple times. Run the commands in the order listed below, verifying that your code builds and runs between each step:
+
+1. Run \`ng g @angular/core:standalone\` and select "Convert all components, directives and pipes to standalone"
+2. Run \`ng g @angular/core:standalone\` and select "Remove unnecessary NgModule classes"
+3. Run \`ng g @angular/core:standalone\` and select "Bootstrap the project using standalone APIs"
+`,
+    documentationUrl: 'https://angular.dev/reference/migrations/standalone',
   },
   {
     name: 'zoneless',
     description: 'Migrates the application to be zoneless.',
-    includedByDefault: false,
-    documentation: 'https://angular.dev/guide/zoneless',
+    documentationUrl: 'https://angular.dev/guide/zoneless',
   },
-] as const;
-
-const ALL_TRANSFORMATIONS = TRANSFORMATIONS.map((t) => t.name);
+];
 
 const modernizeInputSchema = z.object({
-  files: z.array(
-    z.object({
-      name: z.string().describe('The name of the file.'),
-      content: z.string().describe('The content of the file.'),
-    }),
-  ),
-  transformations: z.array(z.enum(ALL_TRANSFORMATIONS as [string, ...string[]])).optional(),
-  mode: z
-    .enum(['convert-to-standalone', 'prune-ng-modules', 'standalone-bootstrap'])
-    .optional()
-    .describe('The mode to use for the standalone transformation.'),
+  // Casting to [string, ...string[]] since the enum definition requires a nonempty array.
+  transformations: z
+    .array(z.enum(TRANSFORMATIONS.map((t) => t.name) as [string, ...string[]]))
+    .optional(),
 });
 
 export type ModernizeInput = z.infer<typeof modernizeInputSchema>;
 
-// Extracted logic for testability
-export async function runModernization(
-  input: ModernizeInput,
-  workflow?: NodeWorkflow,
-  tempDir?: string,
-) {
-  const ownTempDir = !tempDir;
-  tempDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'angular-cli-modernize-'));
+export async function runModernization(input: ModernizeInput) {
   try {
-    const fileNames = input.files.map((f) => f.name);
-    const tsconfig = {
-      compilerOptions: {
-        target: 'es2022',
-        module: 'esnext',
-        lib: ['es2022', 'dom'],
-        skipLibCheck: true,
-        esModuleInterop: true,
-        allowSyntheticDefaultImports: true,
-        experimentalDecorators: true,
-        emitDecoratorMetadata: true,
-        useDefineForClassFields: false,
-      },
-      files: fileNames,
-    };
-    fs.writeFileSync(path.join(tempDir, 'tsconfig.json'), JSON.stringify(tsconfig, null, 2));
-    for (const file of input.files) {
-      const filePath = path.join(tempDir, file.name);
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, file.content);
+    if (!input.transformations || input.transformations.length === 0) {
+      const instructions = [
+        'See https://angular.dev/best-practices for Angular best practices. You can call this tool if you have specific transformation you want to run.',
+      ];
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              instructions,
+            }),
+          },
+        ],
+        structuredContent: {
+          instructions,
+        },
+      };
     }
 
-    workflow ??= new NodeWorkflow(
-      new virtualFs.ScopedHost(new NodeJsSyncHost(), path.normalize(tempDir) as any),
-      {
-        packageManager: 'pnpm',
-        dryRun: false,
-      },
+    const transformationsToRun = TRANSFORMATIONS.filter((t) =>
+      input.transformations!.includes(t.name),
     );
 
-    const angularCorePath = path.dirname(require.resolve('@angular/core/package.json'));
-    const collectionPaths = {
-      [SchematicRunner.Migration]: path.join(angularCorePath, 'schematics/migrations.json'),
-      [SchematicRunner.Collection]: path.join(angularCorePath, 'schematics/collection.json'),
-    };
-
-    const transformationsToRun =
-      input.transformations && input.transformations.length > 0
-        ? TRANSFORMATIONS.filter((t) => input.transformations!.includes(t.name))
-        : TRANSFORMATIONS.filter((t) => t.includedByDefault);
-
-    const hasCodeFiles = input.files.some((f) => f.name.endsWith('.ts'));
-    const hasTemplateFiles = input.files.some(
-      (f) => f.name.endsWith('.html') || f.name.endsWith('.ng.html'),
-    );
-
-    let instructions: string | undefined;
-    const documentation = new Set<string>();
+    const allInstructions: string[] = [];
 
     for (const transformation of transformationsToRun) {
-      if (transformation.documentation) {
-        documentation.add(transformation.documentation);
+      let transformationInstructions = '';
+      if (transformation.instructions) {
+        transformationInstructions = transformation.instructions;
+      } else {
+        // If no instructions are included, default to running a cli schematic with the transformation name.
+        const command = `ng generate @angular/core:${transformation.name}`;
+        transformationInstructions = `To run the ${transformation.name} migration, execute the following command: \`${command}\`.`;
       }
-
-      let options: { [key: string]: unknown } = { path: '/' };
-      if (transformation.name === 'standalone') {
-        const mode = input.mode ?? 'convert-to-standalone';
-        options = { ...options, mode };
-
-        if (mode === 'convert-to-standalone') {
-          instructions =
-            'The first step of the `standalone` migration has been performed. Please verify that your application builds and runs correctly. Then, run this tool again with `mode: "prune-ng-modules"` to continue.';
-        } else if (mode === 'prune-ng-modules') {
-          instructions =
-            'The second step of the `standalone` migration has been performed. Please verify that your application builds and runs correctly. Then, run this tool again with `mode: "standalone-bootstrap"` to complete the migration.';
-        } else {
-          instructions = 'The `standalone` migration has been completed.';
-        }
-      } else if (transformation.name === 'zoneless') {
-        instructions =
-          'The `zoneless` migration is a manual process. Please follow the instructions at https://angular.dev/guide/zoneless to complete the migration.';
-        continue; // Don't run a schematic for zoneless
+      if (transformation.documentationUrl) {
+        transformationInstructions += `\nFor more information, see ${transformation.documentationUrl}.`;
       }
-
-      if (
-        (transformation.target === SchematicTarget.Code && !hasCodeFiles) ||
-        (transformation.target === SchematicTarget.Template && !hasTemplateFiles)
-      ) {
-        continue;
-      }
-
-      await workflow
-        .execute({
-          collection: collectionPaths[transformation.runner],
-          schematic: transformation.name,
-          options,
-        })
-        .toPromise();
+      allInstructions.push(transformationInstructions);
     }
 
-    const updatedFiles = input.files.map((file) => {
-      const filePath = path.join(tempDir!, file.name);
-      if (!fs.existsSync(filePath)) {
-        return { name: file.name, content: undefined, changed: true };
-      }
-      const updatedContent = fs.readFileSync(filePath, 'utf8');
-      const changed = updatedContent !== file.content;
-
-      return {
-        name: file.name,
-        content: changed ? updatedContent : undefined,
-        changed,
-      };
-    });
-
     const structuredContent = {
-      files: updatedFiles,
-      instructions,
-      documentation: documentation.size > 0 ? [...documentation].join('\n') : undefined,
+      instructions: allInstructions.length ? allInstructions : undefined,
     };
 
     return {
@@ -250,10 +139,6 @@ export async function runModernization(
       structuredContent: {},
       isError: true,
     };
-  } finally {
-    if (ownTempDir && tempDir) {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
   }
 }
 
@@ -272,33 +157,17 @@ export function registerModernizeTool(server: McpServer): void {
         '* When the user asks for a specific transformation: When the transformation list is populated, these specific ones will be ran on the inputs.\n' +
         '</Use Cases>\n' +
         '<Transformations>\n' +
-        '<Default Transformations>\n' +
-        TRANSFORMATIONS.filter((t) => t.includedByDefault)
-          .map((t) => `* ${t.name}: ${t.description}`)
-          .join('\n') +
-        '\n</Default Transformations>\n' +
-        '<On-Request Transformations>\n' +
-        TRANSFORMATIONS.filter((t) => !t.includedByDefault)
-          .map((t) => `* ${t.name}: ${t.description}`)
-          .join('\n') +
-        '/\n<On-Request Transformations>\n' +
+        TRANSFORMATIONS.map((t) => `* ${t.name}: ${t.description}`).join('\n') +
         '\n</Transformations>\n',
       annotations: {
         readOnlyHint: true,
       },
       inputSchema: modernizeInputSchema.shape,
       outputSchema: {
-        files: z
-          .array(
-            z.object({
-              name: z.string().describe('The name of the file.'),
-              content: z.string().optional().describe('The updated content of the file.'),
-              changed: z.boolean().describe('Whether the file was changed.'),
-            }),
-          )
-          .optional(),
-        instructions: z.string().optional().describe('Additional instructions.'),
-        documentation: z.string().optional().describe('A link to relevant documentation.'),
+        instructions: z
+          .array(z.string())
+          .optional()
+          .describe('A list of instructions on how to run the migrations.'),
       },
     },
     (input) => runModernization(input as ModernizeInput),

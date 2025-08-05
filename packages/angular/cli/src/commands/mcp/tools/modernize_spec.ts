@@ -1,198 +1,58 @@
 import { ModernizeInput, runModernization } from './modernize';
-import { of } from 'rxjs';
-import { NodeWorkflow } from '@angular-devkit/schematics/tools';
-import * as fs from 'fs';
-import * as path from 'path';
-import { tmpdir } from 'os';
-
-class MockNodeWorkflow {
-  execute() {
-    return of();
-  }
-}
 
 describe('Modernize Tool', () => {
-  let workflow: NodeWorkflow;
-  let executeSpy: jasmine.Spy;
-
-  beforeEach(() => {
-    workflow = new MockNodeWorkflow() as unknown as NodeWorkflow;
-    executeSpy = spyOn(workflow, 'execute').and.callThrough();
-  });
-
-  it('should run a simple transformation', async () => {
-    const input: ModernizeInput = {
-      files: [{ name: 'test.ng.html', content: '<app-foo></app-foo>' }],
-      transformations: ['self-closing-tags-migration'],
-    };
-
-    await runModernization(input, workflow);
-
-    expect(executeSpy).toHaveBeenCalledWith(
-      jasmine.objectContaining({
-        schematic: 'self-closing-tags-migration',
-      }),
-    );
-  });
-
-  it('should return instructions for standalone migration', async () => {
-    const input: ModernizeInput = {
-      files: [{ name: 'test.ts', content: 'console.log("hello")' }],
-      transformations: ['standalone'],
-      mode: 'convert-to-standalone',
-    };
-
-    const result = await runModernization(input, workflow);
-
-    if ('instructions' in result.structuredContent) {
-      expect(result.structuredContent.instructions).toContain(
-        'The first step of the `standalone` migration has been performed.',
-      );
-    } else {
+  async function getInstructions(input: ModernizeInput): Promise<string[] | undefined> {
+    const { structuredContent } = await runModernization(input);
+    if (!structuredContent || !('instructions' in structuredContent)) {
       fail('Expected instructions to be present in the result');
+      return;
     }
-  });
+    return structuredContent.instructions;
+  }
 
-  it('should not run schematics if there are no applicable files', async () => {
-    const input: ModernizeInput = {
-      files: [{ name: 'test.txt', content: 'hello' }],
+  it('should return an instruction for a single transformation', async () => {
+    const instructions = await getInstructions({
       transformations: ['self-closing-tags-migration'],
-    };
+    });
 
-    await runModernization(input, workflow);
-
-    expect(executeSpy).not.toHaveBeenCalled();
+    expect(instructions).toEqual([
+      'To run the self-closing-tags-migration migration, execute the following command: `ng generate @angular/core:self-closing-tags-migration`.' +
+        '\nFor more information, see https://angular.dev/reference/migrations/self-closing-tags.',
+    ]);
   });
 
-  it('should run the default transformations when none are specified', async () => {
-    const input: ModernizeInput = {
-      files: [
-        { name: 'test.ng.html', content: '<app-foo></app-foo>' },
-        { name: 'test.ts', content: 'console.log("hello")' },
-      ],
-    };
+  it('should return instructions for multiple transformations', async () => {
+    const instructions = await getInstructions({
+      transformations: ['self-closing-tags-migration', 'test-bed-get'],
+    });
 
-    await runModernization(input, workflow);
-
-    const defaultTransformations = [
-      'control-flow-migration',
-      'self-closing-tags-migration',
-      'test-bed-get',
-      'inject-flags',
-      'output-migration',
-      'signal-input-migration',
-      'signal-queries-migration',
+    const expectedInstructions = [
+      'To run the self-closing-tags-migration migration, execute the following command: `ng generate @angular/core:self-closing-tags-migration`.' +
+        '\nFor more information, see https://angular.dev/reference/migrations/self-closing-tags.',
+      'To run the test-bed-get migration, execute the following command: `ng generate @angular/core:test-bed-get`.' +
+        '\nFor more information, see https://angular.dev/guide/testing/dependency-injection.',
     ];
 
-    expect(executeSpy.calls.count()).toBe(defaultTransformations.length);
-    const executedSchematics = executeSpy.calls.all().map((call) => call.args[0].schematic);
-    expect(executedSchematics.sort()).toEqual(defaultTransformations.sort());
+    expect(instructions?.sort()).toEqual(expectedInstructions.sort());
   });
 
-  describe('File System Setup', () => {
-    let tempDir: string;
-
-    beforeEach(() => {
-      tempDir = fs.mkdtempSync(path.join(tmpdir(), 'modernize-spec-'));
+  it('should return a link to the best practices page when no transformations are requested', async () => {
+    const instructions = await getInstructions({
+      transformations: [],
     });
 
-    afterEach(() => {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it('should write input files and tsconfig.json to the provided directory', async () => {
-      const input: ModernizeInput = {
-        files: [
-          { name: 'src/app/app.component.ts', content: 'console.log("hello")' },
-          { name: 'src/app/app.component.html', content: '<h1>hello</h1>' },
-        ],
-      };
-
-      await runModernization(input, workflow, tempDir);
-
-      const tsconfigPath = path.join(tempDir, 'tsconfig.json');
-      expect(fs.existsSync(tsconfigPath)).toBe(true);
-      const tsconfig = JSON.parse(fs.readFileSync(tsconfigPath, 'utf8'));
-      expect(tsconfig.files).toEqual(['src/app/app.component.ts', 'src/app/app.component.html']);
-
-      const componentTsPath = path.join(tempDir, 'src/app/app.component.ts');
-      expect(fs.existsSync(componentTsPath)).toBe(true);
-      expect(fs.readFileSync(componentTsPath, 'utf8')).toBe('console.log("hello")');
-      const componentHtmlPath = path.join(tempDir, 'src/app/app.component.html');
-      expect(fs.existsSync(componentHtmlPath)).toBe(true);
-      expect(fs.readFileSync(componentHtmlPath, 'utf8')).toBe('<h1>hello</h1>');
-    });
-
-    it('should return updated file content', async () => {
-      const input: ModernizeInput = {
-        files: [{ name: 'test.ng.html', content: '<app-foo></app-foo>' }],
-        transformations: ['self-closing-tags-migration'],
-      };
-
-      executeSpy.and.callFake(() => {
-        fs.writeFileSync(path.join(tempDir, 'test.ng.html'), '<app-foo />');
-        return of();
-      });
-
-      const result = await runModernization(input, workflow, tempDir);
-
-      if (!('files' in result.structuredContent) || !result.structuredContent.files) {
-        fail('Expected files to be present in the result');
-        return;
-      }
-
-      const fileResult = result.structuredContent.files[0];
-      expect(fileResult?.changed).toBe(true);
-      expect(fileResult?.content).toBe('<app-foo />');
-    });
+    expect(instructions).toEqual([
+      'See https://angular.dev/best-practices for Angular best practices. You can call this tool if you have specific transformation you want to run.',
+    ]);
   });
 
-  describe('Integration Tests', () => {
-    let tempDir: string;
-
-    beforeEach(() => {
-      tempDir = fs.mkdtempSync(path.join(tmpdir(), 'modernize-spec-integration-'));
-      fs.mkdirSync(path.join(tempDir, 'node_modules'));
-      fs.symlinkSync(
-        path.resolve('node_modules/@angular-devkit'),
-        path.join(tempDir, 'node_modules/@angular-devkit'),
-        'dir',
-      );
-      fs.symlinkSync(
-        path.resolve('node_modules/typescript'),
-        path.join(tempDir, 'node_modules/typescript'),
-        'dir',
-      );
+  it('should return special instructions for standalone migration', async () => {
+    const instructions = await getInstructions({
+      transformations: ['standalone'],
     });
 
-    afterEach(() => {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it('should run the self-closing-tags migration', async () => {
-      const runfilesRoot = path.join(__dirname, '../../../../../../../../');
-      const outputFile = path.join(runfilesRoot, 'runfiles.log');
-      console.log('Output file:', outputFile);
-      fs.writeFileSync(outputFile, '');
-      fs.readdirSync(runfilesRoot, { recursive: true }).forEach((file) => {
-        fs.appendFileSync(outputFile, file + '\n');
-      });
-
-      const input: ModernizeInput = {
-        files: [{ name: 'test.ng.html', content: '<app-foo></app-foo>' }],
-        transformations: ['self-closing-tags-migration'],
-      };
-
-      const result = await runModernization(input, undefined, tempDir);
-
-      if (!('files' in result.structuredContent) || !result.structuredContent.files) {
-        fail('Expected files to be present in the result');
-        return;
-      }
-
-      const fileResult = result.structuredContent.files[0];
-      expect(fileResult?.changed).toBe(true);
-      expect(fileResult?.content).toBe('<app-foo />');
-    });
+    expect(instructions![0]).toContain(
+      'Run the commands in the order listed below, verifying that your code builds and runs between each step:',
+    );
   });
 });
