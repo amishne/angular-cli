@@ -32,6 +32,7 @@ export async function stopDevserver(input: DevserverStopToolInput, context: McpT
     workspacePathInput: input.workspace,
     projectNameInput: input.project,
     mcpWorkspace: context.workspace,
+    server: context.server,
   });
   const key = getDevserverKey(workspacePath, projectName);
   const devserver = context.devservers.get(key);

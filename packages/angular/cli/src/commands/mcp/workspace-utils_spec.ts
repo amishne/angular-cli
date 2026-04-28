@@ -179,6 +179,42 @@ describe('MCP Workspace Utils', () => {
       expect(AngularWorkspace.load).toHaveBeenCalledWith('/my/workspace/angular.json');
     });
 
+    it('should allow provided workspace within allowed MCP roots', async () => {
+      const mockServer = {
+        server: {
+          listRoots: jasmine.createSpy('listRoots').and.resolveTo({
+            roots: [{ uri: 'file:///my/' }],
+          }),
+        },
+      } as any;
+
+      const result = await resolveWorkspaceAndProject({
+        host: mockHost,
+        workspacePathInput: '/my/workspace',
+        server: mockServer,
+      });
+      expect(result.workspacePath).toBe('/my/workspace');
+      expect(AngularWorkspace.load).toHaveBeenCalledWith('/my/workspace/angular.json');
+    });
+
+    it('should reject provided workspace outside allowed MCP roots', async () => {
+      const mockServer = {
+        server: {
+          listRoots: jasmine.createSpy('listRoots').and.resolveTo({
+            roots: [{ uri: 'file:///other/' }],
+          }),
+        },
+      } as any;
+
+      await expectAsync(
+        resolveWorkspaceAndProject({
+          host: mockHost,
+          workspacePathInput: '/my/workspace',
+          server: mockServer,
+        }),
+      ).toBeRejectedWithError(/Workspace path is outside the allowed MCP roots/);
+    });
+
     it('should throw if provided workspace does not exist', async () => {
       mockHost.existsSync.and.returnValue(false);
       await expectAsync(

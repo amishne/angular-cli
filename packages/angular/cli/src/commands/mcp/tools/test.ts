@@ -43,6 +43,7 @@ export async function runTest(input: TestToolInput, context: McpToolContext) {
     workspacePathInput: input.workspace,
     projectNameInput: input.project,
     mcpWorkspace: context.workspace,
+    server: context.server,
   });
 
   // Build "ng"'s command line.

@@ -41,6 +41,7 @@ export async function runBuild(input: BuildToolInput, context: McpToolContext) {
     workspacePathInput: input.workspace,
     projectNameInput: input.project,
     mcpWorkspace: context.workspace,
+    server: context.server,
   });
 
   // Build "ng"'s command line.

@@ -35,6 +35,7 @@ export async function runE2e(input: E2eToolInput, host: Host, context: McpToolCo
     workspacePathInput: input.workspace,
     projectNameInput: input.project,
     mcpWorkspace: context.workspace,
+    server: context.server,
   });
 
   if (workspace && projectName) {

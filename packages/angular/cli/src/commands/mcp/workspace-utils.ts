@@ -7,7 +7,9 @@
  */
 
 import { workspaces } from '@angular-devkit/core';
-import { dirname, join } from 'node:path';
+import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { dirname, isAbsolute, join, relative as relativePath, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AngularWorkspace } from '../../utilities/config';
 import { type Host, LocalWorkspaceHost } from './host';
 import { McpToolContext } from './tools/tool-registry';
@@ -92,11 +94,13 @@ export async function resolveWorkspaceAndProject({
   workspacePathInput,
   projectNameInput,
   mcpWorkspace,
+  server,
 }: {
   host: Host;
   workspacePathInput?: string;
   projectNameInput?: string;
   mcpWorkspace?: AngularWorkspace;
+  server?: McpServer;
 }): Promise<{
   workspace: AngularWorkspace;
   workspacePath: string;
@@ -106,6 +110,29 @@ export async function resolveWorkspaceAndProject({
   let workspace: AngularWorkspace;
 
   if (workspacePathInput) {
+    if (server) {
+      // Validate that the provided workspace path is within the allowed MCP roots.
+      // This prevents attackers from tricking the server into loading and executing code
+      // from arbitrary locations on the filesystem.
+      const rootsResponse = await server.server.listRoots();
+      const roots = rootsResponse.roots;
+      const normalizedInputPath = resolve(workspacePathInput);
+
+      const isAllowed = roots.some((root) => {
+        const rootPath = resolve(fileURLToPath(root.uri));
+        const relative = relativePath(rootPath, normalizedInputPath);
+
+        return !relative.startsWith('..') && !isAbsolute(relative);
+      });
+
+      if (!isAllowed) {
+        throw new Error(
+          `Workspace path is outside the allowed MCP roots: ${workspacePathInput}. ` +
+            "You can use 'list_projects' to find available workspaces.",
+        );
+      }
+    }
+
     if (!host.existsSync(workspacePathInput)) {
       throw new Error(
         `Workspace path does not exist: ${workspacePathInput}. ` +

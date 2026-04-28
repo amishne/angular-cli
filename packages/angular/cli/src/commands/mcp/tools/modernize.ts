@@ -111,6 +111,7 @@ export async function runModernization(input: ModernizeInput, context: McpToolCo
     workspacePathInput: input.workspace,
     projectNameInput: input.project,
     mcpWorkspace: context.workspace,
+    server: context.server,
   });
 
   const instructions: string[] = [];

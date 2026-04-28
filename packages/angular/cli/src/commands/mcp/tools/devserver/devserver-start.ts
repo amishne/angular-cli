@@ -48,6 +48,7 @@ export async function startDevserver(input: DevserverStartToolInput, context: Mc
     workspacePathInput: input.workspace,
     projectNameInput: input.project,
     mcpWorkspace: context.workspace,
+    server: context.server,
   });
 
   const key = getDevserverKey(workspacePath, projectName);
